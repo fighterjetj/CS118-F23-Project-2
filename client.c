@@ -25,6 +25,19 @@ void send_handshake(unsigned int file_size, struct packet *pkt, int sockfd, stru
     serve_packet(pkt, sockfd, addr, addr_size);
 }
 
+unsigned int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    unsigned int acknum;
+    int bytes_received = recvfrom(sockfd, &acknum, sizeof(acknum), 0, (struct sockaddr *)addr, &addr_size);
+    if (bytes_received < 0)
+    {
+        perror("Error receiving ACK");
+        exit(1);
+    }
+    printf("ACK %d\n", acknum);
+    return acknum;
+}
+
 // Function that reads in from the file and creates a packet with the next contents
 int read_file_and_create_packet(FILE *fp, struct packet *pkt, unsigned int seq_num)
 {
@@ -51,7 +64,7 @@ int main(int argc, char *argv[])
     struct packet ack_pkt;
     char buffer[PAYLOAD_SIZE];
     unsigned int seq_num = 0;
-    unsigned short ack_num = 0;
+    unsigned int ack_num = 0;
     int bytes_read;
     char last = 0;
     char ack = 0;
@@ -119,8 +132,8 @@ int main(int argc, char *argv[])
     seq_num += bytes_read;
     // Send handshake
     send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
-    printPacket(&pkt);
-
+    // printPacket(&pkt);
+    ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
     /*
     Handshake format:
     1. 4 bytes for file size

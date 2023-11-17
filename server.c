@@ -17,7 +17,7 @@ int write_packet_to_file(FILE *fp, struct packet *pkt)
     return bytes_written;
 }
 
-void recv_packet(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+int recv_packet(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     int bytes_received = recvfrom(sockfd, pkt, PACKET_SIZE, 0, (struct sockaddr *)addr, &addr_size);
     if (bytes_received < 0)
@@ -25,8 +25,8 @@ void recv_packet(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *a
         perror("Error receiving packet");
         exit(1);
     }
-    write_packet_to_file(fp, pkt);
     printRecv(pkt);
+    return write_packet_to_file(fp, pkt);
 }
 
 int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
@@ -34,6 +34,18 @@ int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_i
     recv_packet(fp, pkt, sockfd, addr, addr_size);
     unsigned int file_length = pkt->seqnum;
     return file_length;
+}
+
+// Our ACK messages are just the number sent and nothing else
+void send_ack(unsigned int acknum, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    int bytes_sent = sendto(sockfd, &acknum, sizeof(acknum), 0, (struct sockaddr *)addr, addr_size);
+    if (bytes_sent < 0)
+    {
+        perror("Error sending ACK");
+        exit(1);
+    }
+    printf("ACK %d\n", acknum);
 }
 
 int main()
@@ -90,6 +102,8 @@ int main()
     Handshake: File size
     */
     int file_length = handle_handshake(fp, &buffer, listen_sockfd, &client_addr_from, addr_size);
+    expected_seq_num += buffer.length;
+    send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     /* Upon receiving a packet:
     Read the header
     If the sequence number is the next expected sequence number, ACK it
