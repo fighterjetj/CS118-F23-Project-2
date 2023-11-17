@@ -11,11 +11,12 @@
 #define CLIENT_PORT 6001
 #define SERVER_PORT 6002
 #define CLIENT_PORT_TO 5001
-#define PAYLOAD_SIZE 1194
+#define PACKET_SIZE 1200
+#define HEADER_SIZE 10 // If I make this 6 or 8 it breaks - unsure why, but when it's lower not all data is sent.  This appears to work and we can afford to lose a few bytes
+#define PAYLOAD_SIZE (PACKET_SIZE - HEADER_SIZE)
 #define WINDOW_SIZE 5
 #define TIMEOUT 2
 #define MAX_SEQUENCE 1024
-#define HEADER_SIZE 6
 
 // Packet Layout
 // You may change this if you want to

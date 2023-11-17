@@ -18,6 +18,29 @@ void serve_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, sock
     printSend(pkt, 0);
 }
 
+void send_handshake(unsigned int file_size, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    // Setting the sequence number to the file size
+    pkt->seqnum = file_size;
+    serve_packet(pkt, sockfd, addr, addr_size);
+}
+
+// Function that reads in from the file and creates a packet with the next contents
+int read_file_and_create_packet(FILE *fp, struct packet *pkt, unsigned int seq_num)
+{
+    // Read in the file
+    char payload[PAYLOAD_SIZE];
+    int bytes_read = fread(payload, 1, PAYLOAD_SIZE, fp);
+    if (bytes_read < 0)
+    {
+        perror("Error reading file");
+        exit(1);
+    }
+    // Build the packet
+    build_packet(pkt, seq_num, bytes_read, payload);
+    return bytes_read;
+}
+
 int main(int argc, char *argv[])
 {
     int listen_sockfd, send_sockfd;
@@ -27,8 +50,9 @@ int main(int argc, char *argv[])
     struct packet pkt;
     struct packet ack_pkt;
     char buffer[PAYLOAD_SIZE];
-    unsigned short seq_num = 0;
+    unsigned int seq_num = 0;
     unsigned short ack_num = 0;
+    int bytes_read;
     char last = 0;
     char ack = 0;
 
@@ -91,17 +115,18 @@ int main(int argc, char *argv[])
     fseek(fp, 0, SEEK_END);
     unsigned int file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+    bytes_read = read_file_and_create_packet(fp, &pkt, 0);
+    seq_num += bytes_read;
+    // Send handshake
+    send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
+    printPacket(&pkt);
 
-    struct packet handshake_pkt;
-    char *handshake_payload = "Hello World!\0";
-    build_packet(&handshake_pkt, file_size, 13, handshake_payload);
-    printPacket(&handshake_pkt);
-    serve_packet(&handshake_pkt, send_sockfd, &server_addr_to, addr_size);
     /*
     Handshake format:
     1. 4 bytes for file size
     2. 2 bytes for packet length
     That leaves 1194 bytes for the payload
+    This is just the normal packet format, but instead of the sequence number, we have the file size
     */
     /* We need to read in the file
     As we read it in, we need to create a header formatted as follows:

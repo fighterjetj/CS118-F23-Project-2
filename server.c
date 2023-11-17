@@ -6,6 +6,36 @@
 
 #include "utils.h"
 
+int write_packet_to_file(FILE *fp, struct packet *pkt)
+{
+    size_t bytes_written = fwrite(pkt->payload, 1, pkt->length, fp);
+    if (bytes_written < 0)
+    {
+        perror("Error writing to file");
+        exit(1);
+    }
+    return bytes_written;
+}
+
+void recv_packet(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    int bytes_received = recvfrom(sockfd, pkt, PACKET_SIZE, 0, (struct sockaddr *)addr, &addr_size);
+    if (bytes_received < 0)
+    {
+        perror("Error receiving packet");
+        exit(1);
+    }
+    write_packet_to_file(fp, pkt);
+    printRecv(pkt);
+}
+
+int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    recv_packet(fp, pkt, sockfd, addr, addr_size);
+    unsigned int file_length = pkt->seqnum;
+    return file_length;
+}
+
 int main()
 {
     int listen_sockfd, send_sockfd;
@@ -56,12 +86,10 @@ int main()
     FILE *fp = fopen("output.txt", "wb");
 
     // TODO: Receive file from the client and save it as output.txt
-    recvfrom(listen_sockfd, &buffer, sizeof(buffer), 0, (struct sockaddr *)&client_addr_from, &addr_size);
-    printRecv(&buffer);
-    printPacket(&buffer);
     /*
     Handshake: File size
     */
+    int file_length = handle_handshake(fp, &buffer, listen_sockfd, &client_addr_from, addr_size);
     /* Upon receiving a packet:
     Read the header
     If the sequence number is the next expected sequence number, ACK it
