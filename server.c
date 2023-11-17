@@ -6,7 +6,8 @@
 
 #include "utils.h"
 
-int main() {
+int main()
+{
     int listen_sockfd, send_sockfd;
     struct sockaddr_in server_addr, client_addr_from, client_addr_to;
     struct packet buffer;
@@ -17,14 +18,16 @@ int main() {
 
     // Create a UDP socket for sending
     send_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (send_sockfd < 0) {
+    if (send_sockfd < 0)
+    {
         perror("Could not create send socket");
         return 1;
     }
 
     // Create a UDP socket for listening
     listen_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (listen_sockfd < 0) {
+    if (listen_sockfd < 0)
+    {
         perror("Could not create listen socket");
         return 1;
     }
@@ -36,7 +39,8 @@ int main() {
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind the listen socket to the server address
-    if (bind(listen_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (bind(listen_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
         perror("Bind failed");
         close(listen_sockfd);
         return 1;
@@ -52,9 +56,18 @@ int main() {
     FILE *fp = fopen("output.txt", "wb");
 
     // TODO: Receive file from the client and save it as output.txt
-
-    
-
+    recvfrom(listen_sockfd, &buffer, sizeof(buffer), 0, (struct sockaddr *)&client_addr_from, &addr_size);
+    printRecv(&buffer);
+    printPacket(&buffer);
+    /*
+    Handshake: File size
+    */
+    /* Upon receiving a packet:
+    Read the header
+    If the sequence number is the next expected sequence number, ACK it
+    If the sequence number is out of order buffer it and ACK the last in sequence packet
+    If the sequence number is the last packet, ACK it and close the file
+     */
     fclose(fp);
     close(listen_sockfd);
     close(send_sockfd);
