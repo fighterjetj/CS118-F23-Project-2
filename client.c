@@ -4,6 +4,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
+#include <math.h>
 
 #include "utils.h"
 
@@ -25,12 +27,27 @@ void send_handshake(unsigned int file_size, struct packet *pkt, int sockfd, stru
     serve_packet(pkt, sockfd, addr, addr_size);
 }
 
-unsigned int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+void set_socket_timeout(int sockfd, struct timeval timeout)
+{
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+    {
+        perror("Error setting socket timeout");
+        exit(1);
+    }
+}
+
+unsigned int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size, struct timeval *timeout)
 {
     unsigned int acknum;
+    set_socket_timeout(sockfd, *timeout);
     int bytes_received = recvfrom(sockfd, &acknum, sizeof(acknum), 0, (struct sockaddr *)addr, &addr_size);
     if (bytes_received < 0)
     {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            printf("Timeout\n");
+            return -1;
+        }
         perror("Error receiving ACK");
         exit(1);
     }
@@ -54,21 +71,57 @@ int read_file_and_create_packet(FILE *fp, struct packet *pkt, unsigned int seq_n
     return bytes_read;
 }
 
+void update_timeout(struct timeval *curr_timeout, struct timeval *time_dev, struct timeval *time_elapsed)
+{
+    // Update this code as we implement a more complicated algorithm
+    curr_timeout->tv_sec = TIMEOUT;
+    curr_timeout->tv_usec = 0;
+}
+
+struct timeval get_time_elapsed(struct timeval *start_time)
+{
+    struct timeval curr_time;
+    gettimeofday(&curr_time, NULL);
+    struct timeval time_elapsed;
+    timersub(&curr_time, start_time, &time_elapsed);
+    return time_elapsed;
+}
+
+void increase_window_size(double *window_size, int ssthresh)
+{
+    // Update this code as we implement a more complicated algorithm
+    *window_size = 1.0;
+}
+
+struct sent_packet
+{
+    struct packet pkt;
+    struct timeval time_sent;
+    int ack_received;
+    int timed_out;
+};
+
 int main(int argc, char *argv[])
 {
     int listen_sockfd, send_sockfd;
     struct sockaddr_in client_addr, server_addr_to, server_addr_from;
     socklen_t addr_size = sizeof(server_addr_to);
-    struct timeval tv;
+    struct timeval est_rtt;
+    struct timeval measured_rtt;
+    struct timeval dev_rtt;
     struct packet pkt;
-    struct packet ack_pkt;
     char buffer[PAYLOAD_SIZE];
-    unsigned int seq_num = 0;
+    unsigned int curr_seq_num = 0;
     unsigned int ack_num = 0;
-    int bytes_read;
-    char last = 0;
-    char ack = 0;
+    int bytes_read = 0;
+    double window_size = 1.0;
+    struct sent_packet sent_packets[MAX_WINDOW_SIZE];
 
+    for (int i = 0; i < MAX_WINDOW_SIZE; i++)
+    {
+        sent_packets[i].ack_received = 0;
+        sent_packets[i].timed_out = 0;
+    }
     // read filename from command line argument
     if (argc != 2)
     {
@@ -129,14 +182,21 @@ int main(int argc, char *argv[])
     unsigned int file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     bytes_read = read_file_and_create_packet(fp, &pkt, 0);
-    seq_num += bytes_read;
+    double number_of_packets = (double)file_size / (double)PAYLOAD_SIZE;
+    int number_of_packets_int = (int)ceil(number_of_packets);
+    unsigned int number_of_packets_to_send = (unsigned int)number_of_packets_int;
+    printf("Number of packets to send: %d\n", number_of_packets_to_send);
+    curr_seq_num++;
     // Send handshake
-    send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
+    send_handshake(number_of_packets_to_send, &pkt, send_sockfd, &server_addr_to, addr_size);
     // printPacket(&pkt);
-    ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+    while (recv_ack(listen_sockfd, &server_addr_from, addr_size) != curr_seq_num)
+    {
+        send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
+    }
     /*
     Handshake format:
-    1. 4 bytes for file size
+    1. 4 bytes for file size in packets
     2. 2 bytes for packet length
     That leaves 1194 bytes for the payload
     This is just the normal packet format, but instead of the sequence number, we have the file size

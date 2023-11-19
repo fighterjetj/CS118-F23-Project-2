@@ -17,7 +17,7 @@ int write_packet_to_file(FILE *fp, struct packet *pkt)
     return bytes_written;
 }
 
-int recv_packet(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+void recv_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     int bytes_received = recvfrom(sockfd, pkt, PACKET_SIZE, 0, (struct sockaddr *)addr, &addr_size);
     if (bytes_received < 0)
@@ -26,12 +26,16 @@ int recv_packet(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *ad
         exit(1);
     }
     printRecv(pkt);
-    return write_packet_to_file(fp, pkt);
 }
 
-int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+void handle_recv_packet(unsigned int expected_seq_num, struct recvd_packet *packet_buffer, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
-    recv_packet(fp, pkt, sockfd, addr, addr_size);
+    recv_packet(pkt, sockfd, addr, addr_size);
+}
+
+unsigned int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    recv_packet(pkt, sockfd, addr, addr_size);
     unsigned int file_length = pkt->seqnum;
     return file_length;
 }
@@ -48,6 +52,13 @@ void send_ack(unsigned int acknum, int sockfd, struct sockaddr_in *addr, socklen
     printf("ACK %d\n", acknum);
 }
 
+// Storing a received packet and whether it has been received
+struct recvd_packet
+{
+    int received;
+    struct packet pkt;
+};
+
 int main()
 {
     int listen_sockfd, send_sockfd;
@@ -55,8 +66,15 @@ int main()
     struct packet buffer;
     socklen_t addr_size = sizeof(client_addr_from);
     int expected_seq_num = 0;
+    int largest_received_seq_num = 0;
     int recv_len;
-    struct packet ack_pkt;
+    unsigned int ack;
+    struct recvd_packet recv_packets_buffer[MAX_WINDOW_SIZE];
+    // We haven't received any packets yet
+    for (int i = 0; i < MAX_WINDOW_SIZE; i++)
+    {
+        recv_packets_buffer[i].received = 0;
+    }
 
     // Create a UDP socket for sending
     send_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -101,8 +119,8 @@ int main()
     /*
     Handshake: File size
     */
-    int file_length = handle_handshake(fp, &buffer, listen_sockfd, &client_addr_from, addr_size);
-    expected_seq_num += buffer.length;
+    unsigned int num_packets = handle_handshake(fp, &buffer, listen_sockfd, &client_addr_from, addr_size);
+    expected_seq_num++;
     send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     /* Upon receiving a packet:
     Read the header

@@ -14,9 +14,8 @@
 #define PACKET_SIZE 1200
 #define HEADER_SIZE 10 // If I make this 6 or 8 it breaks - unsure why, but when it's lower not all data is sent.  This appears to work and we can afford to lose a few bytes
 #define PAYLOAD_SIZE (PACKET_SIZE - HEADER_SIZE)
-#define WINDOW_SIZE 5
-#define TIMEOUT 2
-#define MAX_SEQUENCE 1024
+#define TIMEOUT 1
+#define MAX_WINDOW_SIZE 30
 
 // Packet Layout
 // You may change this if you want to
