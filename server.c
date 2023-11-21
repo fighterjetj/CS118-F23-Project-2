@@ -101,9 +101,13 @@ int main()
     /*
     Handshake: File size
     */
+    // Ignore the first handshake to trigger a timeout
     int file_length = handle_handshake(fp, &buffer, listen_sockfd, &client_addr_from, addr_size);
+    file_length = handle_handshake(fp, &buffer, listen_sockfd, &client_addr_from, addr_size);
     expected_seq_num += buffer.length;
+    // usleep(2000);
     send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
+
     /* Upon receiving a packet:
     Read the header
     If the sequence number is the next expected sequence number, ACK it

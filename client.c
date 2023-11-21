@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>
+#include <sys/time.h>
+#include <errno.h>
 
 #include "utils.h"
 
@@ -25,14 +26,30 @@ void send_handshake(unsigned int file_size, struct packet *pkt, int sockfd, stru
     serve_packet(pkt, sockfd, addr, addr_size);
 }
 
+void set_socket_timeout(int sockfd, struct timeval timeout)
+{
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+    {
+        perror("Error setting socket timeout");
+        exit(1);
+    }
+}
+
 unsigned int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     unsigned int acknum;
     int bytes_received = recvfrom(sockfd, &acknum, sizeof(acknum), 0, (struct sockaddr *)addr, &addr_size);
-    if (bytes_received < 0)
-    {
-        perror("Error receiving ACK");
-        exit(1);
+    if (bytes_received < 0) {
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            // Timeout reached, return -1 to deal with it in the main
+            printf("Timeout reached. No message received.\n");
+            return -1;
+        } else {
+            perror("Recvfrom failed");
+        }
+    } else {
+        // Process the received message
+        printf("Received message");
     }
     printf("ACK %d\n", acknum);
     return acknum;
@@ -129,11 +146,35 @@ int main(int argc, char *argv[])
     unsigned int file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     bytes_read = read_file_and_create_packet(fp, &pkt, 0);
-    seq_num += bytes_read;
+    
+    // Begin with sequence number 0
+    seq_num += bytes_read - 1;
+    printf("seq_num: %d", seq_num);
     // Send handshake
     send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
     // printPacket(&pkt);
+
+    // Set timeout for the socket
+    struct timeval timeout;
+    timeout.tv_sec = 0;  // Timeout in seconds
+    timeout.tv_usec = 1;  // Timeout in microseconds
+    set_socket_timeout(listen_sockfd, timeout);
+
     ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+
+    while (ack_num != seq_num + 1) {
+        // Send handshake
+        send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
+        // printPacket(&pkt);
+
+        // Set timeout for the socket
+        struct timeval timeout;
+        timeout.tv_sec = 1;  // Timeout in seconds
+        timeout.tv_usec = 0;  // Timeout in microseconds
+        set_socket_timeout(listen_sockfd, timeout);
+
+        ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+    }
     /*
     Handshake format:
     1. 4 bytes for file size
