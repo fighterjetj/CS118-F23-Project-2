@@ -17,6 +17,7 @@
 #define WINDOW_SIZE 5
 #define TIMEOUT 2
 #define MAX_SEQUENCE 1024
+#define MAX_BUFFER 50
 
 // Packet Layout
 // You may change this if you want to
