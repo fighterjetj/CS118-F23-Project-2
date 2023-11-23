@@ -9,6 +9,12 @@
 
 #include "utils.h"
 
+struct sent_packet
+{
+    struct packet pkt;
+    int resent;
+};
+
 void serve_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     int bytes_sent = sendto(sockfd, pkt, pkt->length + HEADER_SIZE, 0, (struct sockaddr *)addr, addr_size);
@@ -78,6 +84,58 @@ int read_file_and_create_packet(FILE *fp, struct packet *pkt, unsigned int seq_n
     return bytes_read;
 }
 
+// Function that will buffer sent packets for us
+int buffer_packet(struct packet *pkt, struct sent_packet *buffer, unsigned int *ack_num)
+{
+    int ind = pkt->seqnum - *ack_num;
+    if (ind < 0)
+    {
+        printf("Already received ACK up to packet %d, which occurs after packet %d\n", *ack_num, pkt->seqnum);
+        return -1;
+    }
+    if (ind >= MAX_BUFFER)
+    {
+        printf("Exceeded maximum window size with packet %d while waiting for ack for %d\n", pkt->seqnum, *ack_num);
+    }
+    buffer[ind].pkt = *pkt;
+    buffer[ind].resent = 0;
+    return ind;
+}
+
+// Function that handles moving the buffer forward upon receiving an ACK
+void handle_ack(struct sent_packet *buffer, unsigned int *old_ack, unsigned int *new_ack)
+{
+    int num_pkt_recv = *new_ack - *old_ack;
+    if (num_pkt_recv <= 0)
+    {
+        printf("Received old ACK for %d\n", *new_ack);
+        return;
+    }
+    if (num_pkt_recv > MAX_BUFFER)
+    {
+        perror("Received ACK that should not have been sent yet");
+        return;
+    }
+    for (int i = num_pkt_recv; i < MAX_BUFFER; i++)
+    {
+        buffer[i - num_pkt_recv] = buffer[i];
+    }
+    *old_ack = *new_ack;
+}
+
+// Function that marks a packet as resent after resending it
+void resend_packet(struct sent_packet *buffer, unsigned int *packet_num, unsigned int *ack_num, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    int ind = packet_num - ack_num;
+    if (ind < 0 || ind >= MAX_BUFFER)
+    {
+        perror("Can't resend packet not currently buffered");
+        return;
+    }
+    serve_packet(&buffer[ind].pkt, sockfd, addr, addr_size);
+    buffer[ind].resent = 1;
+}
+
 int main(int argc, char *argv[])
 {
     int listen_sockfd, send_sockfd;
@@ -85,13 +143,14 @@ int main(int argc, char *argv[])
     socklen_t addr_size = sizeof(server_addr_to);
     struct timeval tv;
     struct packet pkt;
-    struct packet ack_pkt;
-    char buffer[PAYLOAD_SIZE];
     unsigned int seq_num = 0;
     unsigned int ack_num = 0;
     int bytes_read;
-    char last = 0;
-    char ack = 0;
+    struct sent_packet buffer[MAX_BUFFER];
+    for (int i = 0; i < MAX_BUFFER; i++)
+    {
+        buffer[i].resent = 0;
+    }
 
     // read filename from command line argument
     if (argc != 2)
