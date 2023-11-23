@@ -6,6 +6,12 @@
 
 #include "utils.h"
 
+struct packet_recv
+{
+    struct packet pkt;
+    int received;
+};
+
 int write_packet_to_file(FILE *fp, struct packet *pkt)
 {
     size_t bytes_written = fwrite(pkt->payload, 1, pkt->length, fp);
@@ -14,7 +20,7 @@ int write_packet_to_file(FILE *fp, struct packet *pkt)
         perror("Error writing to file");
         exit(1);
     }
-    printf("Wrote %d bytes to the file \n");
+    printf("Wrote %d bytes to the file \n", bytes_written);
     return bytes_written;
 }
 
@@ -50,7 +56,7 @@ void send_ack(unsigned int acknum, int sockfd, struct sockaddr_in *addr, socklen
 }
 
 // Function that appropriately buffers the packet - returns the index the packet was buffered at or -1 if packet was discarded
-int buffer_packet(struct packet *pkt, struct packet_recv *buffer, int *expected_seq_num)
+int buffer_packet(struct packet *pkt, struct packet_recv *buffer, unsigned int *expected_seq_num)
 {
     int ind = pkt->seqnum - *expected_seq_num;
     if (ind < 0)
@@ -75,17 +81,17 @@ int buffer_packet(struct packet *pkt, struct packet_recv *buffer, int *expected_
 }
 
 // Function that writes all sequential received packets and updates the expected sequence number/buffer appropriately
-void save_packets(FILE *fp, struct packet_recv *buffer, int *expected_seq_num)
+void save_packets(FILE *fp, struct packet_recv *buffer, unsigned int *expected_seq_num)
 {
     int ind = 0;
     while ((ind < MAX_BUFFER) && (buffer[ind].received))
     {
-        write_packet_to_file(fp, buffer[ind].pkt);
+        write_packet_to_file(fp, &buffer[ind].pkt);
         ind++;
-        *expected_seq_num++;
+        (*expected_seq_num)++;
     }
     // If index is 0 no packets were saved
-    if (ind = 0)
+    if (ind == 0)
     {
         return;
     }
@@ -101,19 +107,13 @@ void save_packets(FILE *fp, struct packet_recv *buffer, int *expected_seq_num)
     }
 }
 
-struct packet_recv
-{
-    struct packet pkt;
-    int received;
-};
-
 int main()
 {
     int listen_sockfd, send_sockfd;
     struct sockaddr_in server_addr, client_addr_from, client_addr_to;
     struct packet pkt;
     socklen_t addr_size = sizeof(client_addr_from);
-    int expected_seq_num = 0;
+    unsigned int expected_seq_num = 0;
     // Initializing a buffer of packets to store out of order packets
     struct packet_recv buffer[MAX_BUFFER];
     int buffered_ind;
