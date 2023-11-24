@@ -18,6 +18,8 @@
 #define TIMEOUT 2
 #define MAX_SEQUENCE 1024
 #define MAX_BUFFER 50
+#define ALPHA 0.125
+#define BETA 0.25
 
 // Packet Layout
 // You may change this if you want to

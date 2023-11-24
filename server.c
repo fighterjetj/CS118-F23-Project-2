@@ -113,7 +113,7 @@ int main()
     struct sockaddr_in server_addr, client_addr_from, client_addr_to;
     struct packet pkt;
     socklen_t addr_size = sizeof(client_addr_from);
-    unsigned int expected_seq_num = 0;
+    unsigned int expected_seq_num = 1;
     // Initializing a buffer of packets to store out of order packets
     struct packet_recv buffer[MAX_BUFFER];
     int buffered_ind;
@@ -166,8 +166,9 @@ int main()
     Handshake: File size
     */
     // Ignore the first handshake to trigger a timeout
+    printf("Waiting for handshake\n");
     unsigned int num_packets = handle_handshake(fp, &pkt, listen_sockfd, &client_addr_from, addr_size);
-    expected_seq_num++;
+    printf("Handshake received: %d packets expected\n", num_packets);
     // Dealing with repeated handshake messages
     while (pkt.seqnum == num_packets)
     {
@@ -188,6 +189,7 @@ int main()
             send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
         }
     }
+    printf("File received, shutting down\n");
     /* Upon receiving a packet:
     Read the header
     If the sequence number is the next expected sequence number, ACK it

@@ -13,6 +13,7 @@ struct sent_packet
 {
     struct packet pkt;
     int resent;
+    struct timeval time_sent;
 };
 
 void serve_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
@@ -30,6 +31,7 @@ void send_handshake(unsigned int file_size, struct packet *pkt, int sockfd, stru
 {
     // Setting the sequence number to the file size
     pkt->seqnum = file_size;
+    printf("Sending handshake: ");
     serve_packet(pkt, sockfd, addr, addr_size);
 }
 
@@ -42,7 +44,7 @@ void set_socket_timeout(int sockfd, struct timeval timeout)
     }
 }
 
-unsigned int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     unsigned int acknum;
     int bytes_received = recvfrom(sockfd, &acknum, sizeof(acknum), 0, (struct sockaddr *)addr, &addr_size);
@@ -57,15 +59,16 @@ unsigned int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
         else
         {
             perror("Recvfrom failed");
+            return -1;
         }
     }
     else
     {
         // Process the received message
-        printf("Received message");
+        printf("Received message: ");
     }
     printf("ACK %d\n", acknum);
-    return acknum;
+    return (int)acknum;
 }
 
 // Function that reads in from the file and creates a packet with the next contents
@@ -99,6 +102,7 @@ int buffer_packet(struct packet *pkt, struct sent_packet *buffer, unsigned int *
     }
     buffer[ind].pkt = *pkt;
     buffer[ind].resent = 0;
+    gettimeofday(&buffer[ind].time_sent, NULL);
     return ind;
 }
 
@@ -136,21 +140,47 @@ void resend_packet(struct sent_packet *buffer, unsigned int *packet_num, unsigne
     buffer[ind].resent = 1;
 }
 
+void update_est_rtt(struct timeval *est_rtt, struct timeval *dev_rtt, struct timeval *sample_rtt)
+{
+    // Update the estimated RTT
+    est_rtt->tv_sec = ((1.0 - ALPHA) * est_rtt->tv_sec) + (ALPHA * sample_rtt->tv_sec);
+    est_rtt->tv_usec = ((1.0 - ALPHA) * est_rtt->tv_usec) + (ALPHA * sample_rtt->tv_usec);
+    // Update the deviation RTT
+    dev_rtt->tv_sec = ((1.0 - BETA) * dev_rtt->tv_sec) + (BETA * labs(sample_rtt->tv_sec - est_rtt->tv_sec));
+    dev_rtt->tv_usec = ((1.0 - BETA) * dev_rtt->tv_usec) + (BETA * labs(sample_rtt->tv_usec - est_rtt->tv_usec));
+}
+
+void time_elapsed_since(struct timeval *start, struct timeval *end, struct timeval *elapsed)
+{
+    elapsed->tv_sec = end->tv_sec - start->tv_sec;
+    elapsed->tv_usec = end->tv_usec - start->tv_usec;
+    if (elapsed->tv_usec < 0)
+    {
+        elapsed->tv_sec--;
+        elapsed->tv_usec += 1000000;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     int listen_sockfd, send_sockfd;
     struct sockaddr_in client_addr, server_addr_to, server_addr_from;
     socklen_t addr_size = sizeof(server_addr_to);
-    struct timeval tv;
+    struct timeval timeout;
+    struct timeval dev_rtt;
     struct packet pkt;
     unsigned int seq_num = 0;
-    unsigned int ack_num = 0;
+    int ack_num = 0;
     int bytes_read;
     struct sent_packet buffer[MAX_BUFFER];
     for (int i = 0; i < MAX_BUFFER; i++)
     {
         buffer[i].resent = 0;
     }
+    timeout.tv_sec = TIMEOUT;
+    timeout.tv_usec = 0;
+    dev_rtt.tv_sec = 0;
+    dev_rtt.tv_usec = 0;
 
     // read filename from command line argument
     if (argc != 2)
@@ -205,44 +235,30 @@ int main(int argc, char *argv[])
         close(send_sockfd);
         return 1;
     }
-    // TODO: Read from file, and initiate reliable data transfer to the server
 
     // Get file size
     fseek(fp, 0, SEEK_END);
     unsigned int file_size = ftell(fp);
     unsigned int num_packets = (unsigned int)ceil((double)file_size / PACKET_SIZE);
     fseek(fp, 0, SEEK_SET);
+    printf("Starting to send file: %s, which has size %d which will take %d packets\n", filename, file_size, num_packets);
     bytes_read = read_file_and_create_packet(fp, &pkt, 0);
 
-    // Begin with sequence number 0
-    seq_num++;
-    printf("seq_num: %d", seq_num);
     // Send handshake
     send_handshake(num_packets, &pkt, send_sockfd, &server_addr_to, addr_size);
     // printPacket(&pkt);
-
-    // Set timeout for the socket
-    struct timeval timeout;
-    timeout.tv_sec = 0;  // Timeout in seconds
-    timeout.tv_usec = 1; // Timeout in microseconds
     set_socket_timeout(listen_sockfd, timeout);
 
     ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
 
-    while (ack_num != seq_num + 1)
+    while (ack_num != 1)
     {
         // Send handshake
-        send_handshake(file_size, &pkt, send_sockfd, &server_addr_to, addr_size);
+        send_handshake(num_packets, &pkt, send_sockfd, &server_addr_to, addr_size);
         // printPacket(&pkt);
-
-        // Set timeout for the socket
-        struct timeval timeout;
-        timeout.tv_sec = 1;  // Timeout in seconds
-        timeout.tv_usec = 0; // Timeout in microseconds
-        set_socket_timeout(listen_sockfd, timeout);
-
         ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
     }
+    printf("Received handshake\n");
     /*
     Handshake format:
     1. 4 bytes for file size
