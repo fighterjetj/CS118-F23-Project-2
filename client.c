@@ -103,6 +103,7 @@ int buffer_packet(struct packet *pkt, struct sent_packet *buffer, unsigned int *
     buffer[ind].pkt = *pkt;
     buffer[ind].resent = 0;
     gettimeofday(&buffer[ind].time_sent, NULL);
+    printf("Buffered packet %d\n", pkt->seqnum);
     return ind;
 }
 
@@ -133,7 +134,7 @@ void resend_packet(struct sent_packet *buffer, unsigned int *packet_num, unsigne
     int ind = packet_num - ack_num;
     if (ind < 0 || ind >= MAX_BUFFER)
     {
-        perror("Can't resend packet not currently buffered");
+        printf("Can't resend packet %d - not currently buffered", *packet_num);
         return;
     }
     serve_packet(&buffer[ind].pkt, sockfd, addr, addr_size);
@@ -161,6 +162,14 @@ void time_elapsed_since(struct timeval *start, struct timeval *end, struct timev
     }
 }
 
+void send_and_buffer_packet(struct packet *pkt, struct sent_packet *buffer, unsigned int *ack_num, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+{
+    // Send the packet
+    serve_packet(pkt, sockfd, addr, addr_size);
+    // Buffer the packet
+    int ind = buffer_packet(pkt, buffer, ack_num);
+}
+
 int main(int argc, char *argv[])
 {
     int listen_sockfd, send_sockfd;
@@ -169,16 +178,17 @@ int main(int argc, char *argv[])
     struct timeval timeout;
     struct timeval dev_rtt;
     struct packet pkt;
-    unsigned int seq_num = 0;
+    unsigned int seq_num = 1;
     int ack_num = 0;
+    int new_ack;
     int bytes_read;
     struct sent_packet buffer[MAX_BUFFER];
     for (int i = 0; i < MAX_BUFFER; i++)
     {
         buffer[i].resent = 0;
     }
-    timeout.tv_sec = TIMEOUT;
-    timeout.tv_usec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 200000;
     dev_rtt.tv_sec = 0;
     dev_rtt.tv_usec = 0;
 
@@ -239,7 +249,7 @@ int main(int argc, char *argv[])
     // Get file size
     fseek(fp, 0, SEEK_END);
     unsigned int file_size = ftell(fp);
-    unsigned int num_packets = (unsigned int)ceil((double)file_size / PACKET_SIZE);
+    unsigned int num_packets = (unsigned int)ceil((double)file_size / PAYLOAD_SIZE);
     fseek(fp, 0, SEEK_SET);
     printf("Starting to send file: %s, which has size %d which will take %d packets\n", filename, file_size, num_packets);
     bytes_read = read_file_and_create_packet(fp, &pkt, 0);
@@ -258,14 +268,36 @@ int main(int argc, char *argv[])
         // printPacket(&pkt);
         ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
     }
-    printf("Received handshake\n");
+    printf("Handshake Received\n");
+    while (ack_num <= num_packets)
+    {
+        // Read in the next packet
+        bytes_read = read_file_and_create_packet(fp, &pkt, seq_num);
+        seq_num++;
+        // Send packet
+        send_and_buffer_packet(&pkt, buffer, &ack_num, send_sockfd, &server_addr_to, addr_size);
+        // Receive ack
+        new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+        while (new_ack != seq_num)
+        {
+            // Resend packet
+            resend_packet(buffer, &ack_num, &ack_num, send_sockfd, &server_addr_to, addr_size);
+            // Receive ack
+            new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+        }
+        // Handle ack
+        handle_ack(buffer, &ack_num, &new_ack);
+        ack_num = new_ack;
+    }
+    printf("File sent\n");
+
     /*
-    Handshake format:
-    1. 4 bytes for file size
-    2. 2 bytes for packet length
-    That leaves 1194 bytes for the payload
-    This is just the normal packet format, but instead of the sequence number, we have the file size
-    */
+Handshake format:
+1. 4 bytes for file size
+2. 2 bytes for packet length
+That leaves 1194 bytes for the payload
+This is just the normal packet format, but instead of the sequence number, we have the file size
+*/
     /* We need to read in the file
     As we read it in, we need to create a header formatted as follows:
     1. 4 bytes for the sequence number

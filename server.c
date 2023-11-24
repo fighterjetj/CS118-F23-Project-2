@@ -168,6 +168,7 @@ int main()
     // Ignore the first handshake to trigger a timeout
     printf("Waiting for handshake\n");
     unsigned int num_packets = handle_handshake(fp, &pkt, listen_sockfd, &client_addr_from, addr_size);
+    send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     printf("Handshake received: %d packets expected\n", num_packets);
     // Dealing with repeated handshake messages
     while (pkt.seqnum == num_packets)
@@ -180,16 +181,17 @@ int main()
     // Ex: if we have 5 packets, we expect to receive 0, 1, 2, 3, 4, so expected_seq_num will be 5 after receiving 4
     while (expected_seq_num < num_packets)
     {
-        // We receive any number of repeat handshake messages
         recv_packet(&pkt, listen_sockfd, &client_addr_from, addr_size);
+        // We receive any number of repeat handshake messages
         buffered_ind = buffer_packet(&pkt, buffer, &expected_seq_num);
         if (buffered_ind > -1)
         {
             save_packets(fp, buffer, &expected_seq_num);
-            send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
         }
+        send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     }
     printf("File received, shutting down\n");
+    // No shutdown protocol - see https://piazza.com/class/ln0rg59p7g82fk/post/226
     /* Upon receiving a packet:
     Read the header
     If the sequence number is the next expected sequence number, ACK it
