@@ -191,7 +191,7 @@ int main()
         send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     }
     printf("File received, shutting down\n");
-    // No shutdown protocol - see https://piazza.com/class/ln0rg59p7g82fk/post/226
+    // No shutdown protocol - see https://piazza.com/class/ln0rg59p7g82fk/post/226 -> Not necessary for client to shutdown
     /* Upon receiving a packet:
     Read the header
     If the sequence number is the next expected sequence number, ACK it

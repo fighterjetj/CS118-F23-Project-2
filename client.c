@@ -52,9 +52,9 @@ int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
     {
         if (errno == EWOULDBLOCK || errno == EAGAIN)
         {
-            // Timeout reached, return -1 to deal with it in the main
+            // Timeout reached, return -2 to deal with it in the main
             printf("Timeout reached. No message received.\n");
-            return -1;
+            return -2;
         }
         else
         {
@@ -129,7 +129,14 @@ void handle_ack(struct sent_packet *buffer, unsigned int *old_ack, unsigned int 
 }
 
 // Function that marks a packet as resent after resending it
-void resend_packet(struct sent_packet *buffer, unsigned int *packet_num, unsigned int *ack_num, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+void resend_packet(
+    struct sent_packet *buffer,
+    unsigned int *packet_num,
+    unsigned int *ack_num,
+    int sockfd,
+    struct sockaddr_in *addr,
+    socklen_t addr_size
+    )
 {
     int ind = packet_num - ack_num;
     if (ind < 0 || ind >= MAX_BUFFER)
@@ -162,7 +169,14 @@ void time_elapsed_since(struct timeval *start, struct timeval *end, struct timev
     }
 }
 
-void send_and_buffer_packet(struct packet *pkt, struct sent_packet *buffer, unsigned int *ack_num, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+void send_and_buffer_packet(
+    struct packet *pkt,
+    struct sent_packet *buffer,
+    unsigned int *ack_num,
+    int sockfd,
+    struct sockaddr_in *addr,
+    socklen_t addr_size
+    )
 {
     // Send the packet
     serve_packet(pkt, sockfd, addr, addr_size);
@@ -269,25 +283,59 @@ int main(int argc, char *argv[])
         ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
     }
     printf("Handshake Received\n");
-    while (ack_num <= num_packets)
+    // Changed the following <= to < for correct client shutdown if the server's final ACK is not lost
+    while (ack_num < num_packets)
     {
-        // Read in the next packet
-        bytes_read = read_file_and_create_packet(fp, &pkt, seq_num);
-        seq_num++;
-        // Send packet
-        send_and_buffer_packet(&pkt, buffer, &ack_num, send_sockfd, &server_addr_to, addr_size);
+        // The number of packets in flight is seq_num - ack_num
+        int num_packets_in_flight = seq_num - ack_num;
+
+        // In this case, we want to have a fixed cwnd size of 4. We want 4 packets to be flying
+        // as often as possible. This only changes when we are reaching the end of the file and
+        // we have less than 4 packets left to send. Therefore, the number of packets we want to
+        // send is min(4 - num_packets_in_flight, num_packets - seq_num)
+        int num_packets_to_send = fmin(4 - num_packets_in_flight, num_packets - seq_num);
+        
+        // Send the packets
+        for (int i = 0; i < num_packets_to_send; i++){
+            // Read in the next packet
+            bytes_read = read_file_and_create_packet(fp, &pkt, seq_num);
+            seq_num++;
+            // Send packet
+            send_and_buffer_packet(&pkt, buffer, &ack_num, send_sockfd, &server_addr_to, addr_size);
+        }
+
+
         // Receive ack
         new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
-        while (new_ack != seq_num)
+
+        if (new_ack == -1)
         {
-            // Resend packet
-            resend_packet(buffer, &ack_num, &ack_num, send_sockfd, &server_addr_to, addr_size);
-            // Receive ack
-            new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+            // Treat the case in which recvfrom has failed
         }
-        // Handle ack
-        handle_ack(buffer, &ack_num, &new_ack);
-        ack_num = new_ack;
+        else if (new_ack == -2) 
+        {
+            // Treat the case in which recvfrom has timed out
+            // Right now there are 4 flying packets, so the timeout is for the first packet in the
+            // buffer. Resend this packet
+            printf("There has been a timeout, resending first packet\n");
+            serve_packet(&buffer[0].pkt, send_sockfd, &server_addr_to, addr_size);
+        }
+        else
+        {
+            // Treat the case in which an ack has been received
+            handle_ack(buffer, &ack_num, &new_ack);
+            ack_num = new_ack;
+        }
+        
+
+        // while (new_ack != seq_num)
+        // {
+        //     // Resend packet
+        //     resend_packet(buffer, &ack_num, &ack_num, send_sockfd, &server_addr_to, addr_size);
+        //     // Receive ack
+        //     new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
+        // }
+
     }
     printf("File sent\n");
 
