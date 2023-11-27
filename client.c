@@ -13,8 +13,31 @@ struct sent_packet
 {
     struct packet pkt;
     int resent;
+    struct timeval timeout_time;
     struct timeval time_sent;
 };
+
+void add_timeval(struct timeval *base_val, struct timeval *to_add)
+{
+    base_val->tv_sec += to_add->tv_sec;
+    base_val->tv_usec += to_add->tv_usec;
+    if (base_val->tv_usec >= 1000000)
+    {
+        base_val->tv_sec++;
+        base_val->tv_usec -= 1000000;
+    }
+}
+
+void mult_timeval(struct timeval *base_val, int multiplier)
+{
+    base_val->tv_sec *= multiplier;
+    base_val->tv_usec *= multiplier;
+    while (base_val->tv_usec >= 1000000)
+    {
+        base_val->tv_usec -= 1000000;
+        base_val->tv_sec++;
+    }
+}
 
 void serve_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
@@ -35,13 +58,24 @@ void send_handshake(int file_size, struct packet *pkt, int sockfd, struct sockad
     serve_packet(pkt, sockfd, addr, addr_size);
 }
 
-void set_socket_timeout(int sockfd, struct timeval timeout)
+void set_socket_timeout(int sockfd, struct timeval *timeout)
 {
-    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+    if (timeout->tv_sec > 0 || timeout->tv_usec > 10000)
     {
-        perror("Error setting socket timeout");
-        exit(1);
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, timeout, sizeof(*timeout)) < 0)
+        {
+            perror("Error setting socket timeout");
+            exit(1);
+        }
     }
+}
+
+void calc_and_set_timeout(int sockfd, struct timeval *est_rtt, struct timeval *dev_rtt)
+{
+    struct timeval timeout = *dev_rtt;
+    mult_timeval(&timeout, 4);
+    add_timeval(&timeout, est_rtt);
+    set_socket_timeout(sockfd, &timeout);
 }
 
 int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
@@ -88,7 +122,7 @@ int read_file_and_create_packet(FILE *fp, struct packet *pkt, int seq_num)
 }
 
 // Function that will buffer sent packets for us
-int buffer_packet(struct packet *pkt, struct sent_packet *buffer, int ack_num)
+int buffer_packet(struct packet *pkt, struct sent_packet *buffer, int ack_num, struct timeval *timeout)
 {
     int ind = pkt->seqnum - ack_num;
     if (ind < 0)
@@ -102,7 +136,11 @@ int buffer_packet(struct packet *pkt, struct sent_packet *buffer, int ack_num)
     }
     buffer[ind].pkt = *pkt;
     buffer[ind].resent = 0;
-    gettimeofday(&buffer[ind].time_sent, NULL);
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    buffer[ind].time_sent = now;
+    buffer[ind].timeout_time = now;
+    add_timeval(&buffer[ind].timeout_time, timeout);
     printf("Buffered packet %d\n", pkt->seqnum);
     return ind;
 }
@@ -159,15 +197,15 @@ void resend_packet(
 
 void update_est_rtt(struct timeval *est_rtt, struct timeval *dev_rtt, struct timeval *sample_rtt)
 {
-    // Update the estimated RTT
-    est_rtt->tv_sec = ((1.0 - ALPHA) * est_rtt->tv_sec) + (ALPHA * sample_rtt->tv_sec);
-    est_rtt->tv_usec = ((1.0 - ALPHA) * est_rtt->tv_usec) + (ALPHA * sample_rtt->tv_usec);
     // Update the deviation RTT
     dev_rtt->tv_sec = ((1.0 - BETA) * dev_rtt->tv_sec) + (BETA * labs(sample_rtt->tv_sec - est_rtt->tv_sec));
     dev_rtt->tv_usec = ((1.0 - BETA) * dev_rtt->tv_usec) + (BETA * labs(sample_rtt->tv_usec - est_rtt->tv_usec));
+    // Update the estimated RTT
+    est_rtt->tv_sec = ((1.0 - ALPHA) * est_rtt->tv_sec) + (ALPHA * sample_rtt->tv_sec);
+    est_rtt->tv_usec = ((1.0 - ALPHA) * est_rtt->tv_usec) + (ALPHA * sample_rtt->tv_usec);
 }
 
-void time_elapsed_since(struct timeval *start, struct timeval *end, struct timeval *elapsed)
+void time_between(struct timeval *start, struct timeval *end, struct timeval *elapsed)
 {
     elapsed->tv_sec = end->tv_sec - start->tv_sec;
     elapsed->tv_usec = end->tv_usec - start->tv_usec;
@@ -178,15 +216,11 @@ void time_elapsed_since(struct timeval *start, struct timeval *end, struct timev
     }
 }
 
-void add_timeval(struct timeval *base_val, struct timeval *to_add)
+void time_since(struct timeval *start_time, struct timeval *elapsed_time)
 {
-    base_val->tv_sec += to_add->tv_sec;
-    base_val->tv_usec += to_add->tv_usec;
-    if (base_val->tv_usec >= 1000000)
-    {
-        base_val->tv_sec++;
-        base_val->tv_usec -= 1000000;
-    }
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    time_between(start_time, &now, elapsed_time);
 }
 
 void send_and_buffer_packet(
@@ -195,12 +229,26 @@ void send_and_buffer_packet(
     int ack_num,
     int sockfd,
     struct sockaddr_in *addr,
-    socklen_t addr_size)
+    socklen_t addr_size,
+    struct timeval *timeout)
 {
     // Send the packet
     serve_packet(pkt, sockfd, addr, addr_size);
     // Buffer the packet
-    buffer_packet(pkt, buffer, ack_num);
+    buffer_packet(pkt, buffer, ack_num, timeout);
+}
+
+void time_til_timeout(struct sent_packet *buffer, int pkt_num, int ack_num, struct timeval *tv)
+{
+    int ind = pkt_num - ack_num;
+    if (ind < 0 || ind >= MAX_BUFFER)
+    {
+        printf("Packet %d is not buffered", pkt_num);
+        return;
+    }
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    time_between(&now, &buffer[ind].timeout_time, tv);
 }
 
 void send_unsent_packets(
@@ -212,7 +260,8 @@ void send_unsent_packets(
     struct sent_packet *buffer,
     int sockfd,
     struct sockaddr_in *addr,
-    socklen_t addr_size)
+    socklen_t addr_size,
+    struct timeval *timeout)
 {
     // The number of currently sent but unacked packets
     int num_unacked = *seq_num - ack_num;
@@ -221,8 +270,30 @@ void send_unsent_packets(
     {
         read_file_and_create_packet(fp, pkt, *seq_num);
         (*seq_num)++;
-        send_and_buffer_packet(pkt, buffer, ack_num, sockfd, addr, addr_size);
+        send_and_buffer_packet(pkt, buffer, ack_num, sockfd, addr, addr_size, timeout);
     }
+}
+
+void pkt_rtt(struct sent_packet *buffer, int pkt_num, int ack_num, struct timeval *rtt)
+{
+    int ind = pkt_num - ack_num;
+    if (ind < 0 || ind >= MAX_BUFFER)
+    {
+        printf("Packet %d is not buffered", pkt_num);
+        return;
+    }
+    time_since(&buffer[ind].time_sent, rtt);
+}
+
+int packet_resent(struct sent_packet *buffer, int pkt_num, int ack_num)
+{
+    int ind = pkt_num - ack_num;
+    if (ind < 0 || ind >= MAX_BUFFER)
+    {
+        printf("No such packet buffered - returning true");
+        return -1;
+    }
+    return buffer[ind].resent;
 }
 
 int main(int argc, char *argv[])
@@ -243,9 +314,9 @@ int main(int argc, char *argv[])
         buffer[i].resent = 0;
     }
     timeout.tv_sec = 0;
-    timeout.tv_usec = 200000;
+    timeout.tv_usec = 160000;
     dev_rtt.tv_sec = 0;
-    dev_rtt.tv_usec = 0;
+    dev_rtt.tv_usec = 10000;
 
     // read filename from command line argument
     if (argc != 2)
@@ -311,11 +382,11 @@ int main(int argc, char *argv[])
 
     // Send handshake
     send_handshake(num_packets, &pkt, send_sockfd, &server_addr_to, addr_size);
-    // printPacket(&pkt);
-    set_socket_timeout(listen_sockfd, timeout);
+
+    calc_and_set_timeout(listen_sockfd, &timeout, &dev_rtt);
 
     ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
-
+    // We retransmit the handshake for as long as we continue to timeout (we should never receive an ACK that isn't 1 b/c no other packets have been sent)
     while (ack_num != 1)
     {
         // Send handshake
@@ -324,10 +395,10 @@ int main(int argc, char *argv[])
         ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
     }
     printf("Handshake Received\n");
-    // Changed the following <= to < for correct client shutdown if the server's final ACK is not lost
+
     while (ack_num < num_packets)
     {
-        // Additive increase
+        // Additive increase - after getting cwnd packets acked, increment it by 1
         if (ack_num - last_ack_cwnd_change >= cwnd)
         {
             cwnd++;
@@ -336,7 +407,8 @@ int main(int argc, char *argv[])
         // Making sure that the cwnd doesn't grow too big
         cwnd = fmin(cwnd, num_packets - seq_num);
         cwnd = fmin(cwnd, MAX_BUFFER);
-        send_unsent_packets(cwnd, &seq_num, ack_num, fp, &pkt, buffer, send_sockfd, &server_addr_to, addr_size);
+        // Sends all packets that are valid in our cwnd
+        send_unsent_packets(cwnd, &seq_num, ack_num, fp, &pkt, buffer, send_sockfd, &server_addr_to, addr_size, &timeout);
 
         // Receive ack
         new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
@@ -349,8 +421,6 @@ int main(int argc, char *argv[])
         else if (new_ack == -2)
         {
             // Treat the case in which recvfrom has timed out
-            // Right now there are 4 flying packets, so the timeout is for the first packet in the
-            // buffer. Resend this packet
             printf("There has been a timeout, resending packet number %d\n", ack_num);
             resend_packet(buffer, ack_num, ack_num, send_sockfd, &server_addr_to, addr_size);
             cwnd = INITIAL_WINDOW;
@@ -364,7 +434,7 @@ int main(int argc, char *argv[])
                 // Fast retransmit
                 if (num_times_ack_repeated == 3)
                 {
-                    printf("Multiple ACKs for %d detected - beginning fast retransmit", ack_num);
+                    printf("Multiple ACKs for %d detected - beginning fast retransmit\n", ack_num);
                     resend_packet(buffer, ack_num, ack_num, send_sockfd, &server_addr_to, addr_size);
                     cwnd /= 2;
                     last_ack_cwnd_change = ack_num;
@@ -379,48 +449,34 @@ int main(int argc, char *argv[])
             {
                 num_times_ack_repeated = 0;
             }
-            // Treat the case in which an ack has been received
+            if (new_ack == seq_num)
+            {
+                struct timeval rtt;
+                pkt_rtt(buffer, new_ack, ack_num, &rtt);
+                update_est_rtt(&timeout, &dev_rtt, &rtt);
+                // calc_and_set_timeout(listen_sockfd, &timeout, &dev_rtt);
+            }
             ack_num = handle_ack(buffer, ack_num, new_ack);
+            /*
+            // If some packets are still in flight, we can change the timeout
+            if (ack_num < seq_num)
+            {
+                struct timeval new_timeout;
+                time_til_timeout(buffer, ack_num, ack_num, &new_timeout);
+                if (!(new_timeout.tv_sec < 0))
+                {
+                    set_socket_timeout(listen_sockfd, new_timeout);
+                }
+            }
+            // Otherwise, no packets in flight so we reset the timeout
+            else if (ack_num == seq_num)
+            {
+                set_socket_timeout(listen_sockfd, timeout);
+            }
+            */
         }
-
-        // while (new_ack != seq_num)
-        // {
-        //     // Resend packet
-        //     resend_packet(buffer, &ack_num, &ack_num, send_sockfd, &server_addr_to, addr_size);
-        //     // Receive ack
-        //     new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
-        // }
     }
     printf("File sent\n");
-
-    /*
-Handshake format:
-1. 4 bytes for file size
-2. 2 bytes for packet length
-That leaves 1194 bytes for the payload
-This is just the normal packet format, but instead of the sequence number, we have the file size
-*/
-    /* We need to read in the file
-    As we read it in, we need to create a header formatted as follows:
-    1. 4 bytes for the sequence number
-    2. 2 bytes for packet length
-    That leaves 1194 bytes for the payload
-    Then we need to send the packet to the server
-    Set a timeout timer
-    If the ack is received, we terminate
-    If we timeout, we resend
-    */
-
-    /*
-    Roadmap:
-    Send one packet to the server
-    Ack that packet
-    Send entire file and ack (one packet at a time)
-    Send multiple packets at a time and ack (using fixed timeout and fixed window size)
-    Send multiple packets at a time and ack (using variable window size)
-    Tuning the system to get best efficiency
-    */
-
     fclose(fp);
     close(listen_sockfd);
     close(send_sockfd);
