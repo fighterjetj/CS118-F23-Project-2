@@ -21,7 +21,7 @@
 #define ALPHA 0.125
 #define BETA 0.25
 #define SSTHRESH 10
-
+#define INITIAL_WINDOW 1
 // Packet Layout
 // You may change this if you want to
 struct packet

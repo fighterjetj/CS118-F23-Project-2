@@ -227,14 +227,16 @@ void send_unsent_packets(
 
 int main(int argc, char *argv[])
 {
-    int listen_sockfd, send_sockfd, new_ack;
+    int listen_sockfd, send_sockfd, new_ack, num_times_ack_repeated, last_ack_cwnd_change, seq_num, ack_num, cwnd;
     struct sockaddr_in client_addr, server_addr_to, server_addr_from;
     socklen_t addr_size = sizeof(server_addr_to);
     struct timeval timeout, dev_rtt;
     struct packet pkt;
-    int seq_num = 1;
-    int ack_num = 0;
-    int cwnd = 1;
+    seq_num = 1;
+    ack_num = 0;
+    num_times_ack_repeated = 0;
+    last_ack_cwnd_change = 0;
+    cwnd = INITIAL_WINDOW;
     struct sent_packet buffer[MAX_BUFFER];
     for (int i = 0; i < MAX_BUFFER; i++)
     {
@@ -304,7 +306,7 @@ int main(int argc, char *argv[])
     int file_size = ftell(fp);
     int num_packets = (int)ceil((double)file_size / PAYLOAD_SIZE);
     fseek(fp, 0, SEEK_SET);
-    printf("Starting to send file: %s, which has size %d which will take %d packets\n", filename, file_size, num_packets);
+    printf("Starting to send file: %s, which has size %d (%d packets)\n", filename, file_size, num_packets);
     read_file_and_create_packet(fp, &pkt, 0);
 
     // Send handshake
@@ -325,13 +327,15 @@ int main(int argc, char *argv[])
     // Changed the following <= to < for correct client shutdown if the server's final ACK is not lost
     while (ack_num < num_packets)
     {
-        // The number of packets in flight is seq_num - ack_num
-
-        // In this case, we want to have a fixed cwnd size of 4. We want 4 packets to be flying
-        // as often as possible. This only changes when we are reaching the end of the file and
-        // we have less than 4 packets left to send. Therefore, the number of packets we want to
-        // send is min(4 - num_packets_in_flight, num_packets - seq_num)
-        cwnd = fmin(4, num_packets - seq_num);
+        // Additive increase
+        if (ack_num - last_ack_cwnd_change >= cwnd)
+        {
+            cwnd++;
+            last_ack_cwnd_change = ack_num;
+        }
+        // Making sure that the cwnd doesn't grow too big
+        cwnd = fmin(cwnd, num_packets - seq_num);
+        cwnd = fmin(cwnd, MAX_BUFFER);
         send_unsent_packets(cwnd, &seq_num, ack_num, fp, &pkt, buffer, send_sockfd, &server_addr_to, addr_size);
 
         // Receive ack
@@ -339,18 +343,42 @@ int main(int argc, char *argv[])
 
         if (new_ack == -1)
         {
-            // Treat the case in which recvfrom has failed
+            // Treat the case in which recvfrom has failed - just exit for now
+            exit(1);
         }
         else if (new_ack == -2)
         {
             // Treat the case in which recvfrom has timed out
             // Right now there are 4 flying packets, so the timeout is for the first packet in the
             // buffer. Resend this packet
-            printf("There has been a timeout, resending packet number %d\n", buffer[0].pkt.seqnum);
-            serve_packet(&buffer[0].pkt, send_sockfd, &server_addr_to, addr_size);
+            printf("There has been a timeout, resending packet number %d\n", ack_num);
+            resend_packet(buffer, ack_num, ack_num, send_sockfd, &server_addr_to, addr_size);
+            cwnd = INITIAL_WINDOW;
+            last_ack_cwnd_change = ack_num;
         }
         else
         {
+            if (new_ack == ack_num)
+            {
+                num_times_ack_repeated++;
+                // Fast retransmit
+                if (num_times_ack_repeated == 3)
+                {
+                    printf("Multiple ACKs for %d detected - beginning fast retransmit", ack_num);
+                    resend_packet(buffer, ack_num, ack_num, send_sockfd, &server_addr_to, addr_size);
+                    cwnd /= 2;
+                    last_ack_cwnd_change = ack_num;
+                }
+                // Fast recovery
+                else if (num_times_ack_repeated > 3)
+                {
+                    cwnd++;
+                }
+            }
+            else
+            {
+                num_times_ack_repeated = 0;
+            }
             // Treat the case in which an ack has been received
             ack_num = handle_ack(buffer, ack_num, new_ack);
         }
