@@ -20,18 +20,19 @@
 #define MAX_BUFFER 50
 #define ALPHA 0.125
 #define BETA 0.25
+#define SSTHRESH 10
 
 // Packet Layout
 // You may change this if you want to
 struct packet
 {
     unsigned short length;
-    unsigned int seqnum;
+    int seqnum;
     char payload[PAYLOAD_SIZE];
 };
 
 // Utility function to build a packet
-void build_packet(struct packet *pkt, unsigned int seqnum, unsigned short length, const char *payload)
+void build_packet(struct packet *pkt, int seqnum, unsigned short length, const char *payload)
 {
     pkt->seqnum = seqnum;
     pkt->length = length;

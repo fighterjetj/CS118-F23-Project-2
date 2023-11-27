@@ -39,12 +39,12 @@ int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_i
 {
     recv_packet(pkt, sockfd, addr, addr_size);
     write_packet_to_file(fp, pkt);
-    unsigned int num_packets_expected = pkt->seqnum;
+    int num_packets_expected = pkt->seqnum;
     return num_packets_expected;
 }
 
 // Our ACK messages are just the number sent and nothing else
-void send_ack(unsigned int acknum, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
+void send_ack(int acknum, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     int bytes_sent = sendto(sockfd, &acknum, sizeof(acknum), 0, (struct sockaddr *)addr, addr_size);
     if (bytes_sent < 0)
@@ -56,7 +56,7 @@ void send_ack(unsigned int acknum, int sockfd, struct sockaddr_in *addr, socklen
 }
 
 // Function that appropriately buffers the packet - returns the index the packet was buffered at or -1 if packet was discarded
-int buffer_packet(struct packet *pkt, struct packet_recv *buffer, unsigned int *expected_seq_num)
+int buffer_packet(struct packet *pkt, struct packet_recv *buffer, int *expected_seq_num)
 {
     int ind = pkt->seqnum - *expected_seq_num;
     if (ind < 0)
@@ -81,7 +81,7 @@ int buffer_packet(struct packet *pkt, struct packet_recv *buffer, unsigned int *
 }
 
 // Function that writes all sequential received packets and updates the expected sequence number/buffer appropriately
-void save_packets(FILE *fp, struct packet_recv *buffer, unsigned int *expected_seq_num)
+void save_packets(FILE *fp, struct packet_recv *buffer, int *expected_seq_num)
 {
     int ind = 0;
     while ((ind < MAX_BUFFER) && (buffer[ind].received))
@@ -113,7 +113,7 @@ int main()
     struct sockaddr_in server_addr, client_addr_from, client_addr_to;
     struct packet pkt;
     socklen_t addr_size = sizeof(client_addr_from);
-    unsigned int expected_seq_num = 1;
+    int expected_seq_num = 1;
     // Initializing a buffer of packets to store out of order packets
     struct packet_recv buffer[MAX_BUFFER];
     int buffered_ind;
@@ -167,7 +167,7 @@ int main()
     */
     // Ignore the first handshake to trigger a timeout
     printf("Waiting for handshake\n");
-    unsigned int num_packets = handle_handshake(fp, &pkt, listen_sockfd, &client_addr_from, addr_size);
+    int num_packets = handle_handshake(fp, &pkt, listen_sockfd, &client_addr_from, addr_size);
     send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     printf("Handshake received: %d packets expected\n", num_packets);
     // Dealing with repeated handshake messages
