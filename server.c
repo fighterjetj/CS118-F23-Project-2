@@ -20,7 +20,7 @@ int write_packet_to_file(FILE *fp, struct packet *pkt)
         perror("Error writing to file");
         exit(1);
     }
-    printf("Wrote %d bytes to the file \n", bytes_written);
+    printf("Wrote %d bytes to the file \n", (int)bytes_written);
     return bytes_written;
 }
 

@@ -200,7 +200,7 @@ void send_and_buffer_packet(
     // Send the packet
     serve_packet(pkt, sockfd, addr, addr_size);
     // Buffer the packet
-    int ind = buffer_packet(pkt, buffer, ack_num);
+    buffer_packet(pkt, buffer, ack_num);
 }
 
 void send_unsent_packets(
@@ -211,7 +211,7 @@ void send_unsent_packets(
     struct packet *pkt,
     struct sent_packet *buffer,
     int sockfd,
-    struct sockaddr_ind *addr,
+    struct sockaddr_in *addr,
     socklen_t addr_size)
 {
     // The number of currently sent but unacked packets
@@ -227,7 +227,7 @@ void send_unsent_packets(
 
 int main(int argc, char *argv[])
 {
-    int listen_sockfd, send_sockfd, new_ack, bytes_read;
+    int listen_sockfd, send_sockfd, new_ack;
     struct sockaddr_in client_addr, server_addr_to, server_addr_from;
     socklen_t addr_size = sizeof(server_addr_to);
     struct timeval timeout, dev_rtt;
@@ -305,7 +305,7 @@ int main(int argc, char *argv[])
     int num_packets = (int)ceil((double)file_size / PAYLOAD_SIZE);
     fseek(fp, 0, SEEK_SET);
     printf("Starting to send file: %s, which has size %d which will take %d packets\n", filename, file_size, num_packets);
-    bytes_read = read_file_and_create_packet(fp, &pkt, 0);
+    read_file_and_create_packet(fp, &pkt, 0);
 
     // Send handshake
     send_handshake(num_packets, &pkt, send_sockfd, &server_addr_to, addr_size);
