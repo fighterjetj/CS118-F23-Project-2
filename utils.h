@@ -20,8 +20,9 @@
 #define MAX_BUFFER 50
 #define ALPHA 0.125
 #define BETA 0.25
-#define SSTHRESH 10
+#define SSTHRESH 5
 #define INITIAL_WINDOW 1
+#define PRINT_STATEMENTS 0
 // Packet Layout
 // You may change this if you want to
 struct packet
