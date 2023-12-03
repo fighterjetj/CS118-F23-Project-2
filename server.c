@@ -121,7 +121,7 @@ void save_packets(FILE *fp, struct packet_recv *buffer, int *expected_seq_num)
         buffer[i - ind] = buffer[i];
     }
     // Marking the packets at the very end as not received
-    for (int i = 0; i < ind; i++)
+    for (int i = MAX_BUFFER - ind; i < MAX_BUFFER; i++)
     {
         buffer[i].received = 0;
     }
