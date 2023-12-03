@@ -24,14 +24,24 @@ void serve_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, sock
         perror("Error sending packet");
         exit(1);
     }
-    printSend(pkt, 0);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printSend(pkt, 0);
+    }
+    */
 }
 
 void send_handshake(int file_size, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
 {
     // Setting the sequence number to the file size
     pkt->seqnum = file_size;
-    printf("Sending handshake: ");
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Sending handshake: ");
+    }
+    */
     serve_packet(pkt, sockfd, addr, addr_size);
 }
 
@@ -53,7 +63,12 @@ int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
         if (errno == EWOULDBLOCK || errno == EAGAIN)
         {
             // Timeout reached, return -2 to deal with it in the main
-            printf("Timeout reached. No message received.\n");
+            /*
+            if (PRINT_STATEMENTS)
+            {
+                printf("Timeout reached. No message received.\n");
+            }
+            */
             return -2;
         }
         else
@@ -62,12 +77,12 @@ int recv_ack(int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
             return -1;
         }
     }
-    else
+    /*
+    if (PRINT_STATEMENTS)
     {
-        // Process the received message
-        printf("Received message: ");
+        printf("ACK %d\n", acknum);
     }
-    printf("ACK %d\n", acknum);
+    */
     return (int)acknum;
 }
 
@@ -99,11 +114,12 @@ int buffer_packet(struct packet *pkt, struct sent_packet *buffer, int ack_num)
     if (ind >= MAX_BUFFER)
     {
         printf("Exceeded maximum window size with packet %d while waiting for ack for %d\n", pkt->seqnum, ack_num);
+        return -1;
     }
     buffer[ind].pkt = *pkt;
     buffer[ind].resent = 0;
     gettimeofday(&buffer[ind].time_sent, NULL);
-    printf("Buffered packet %d\n", pkt->seqnum);
+    // printf("Buffered packet %d\n", pkt->seqnum);
     return ind;
 }
 
@@ -118,7 +134,12 @@ int handle_ack(struct sent_packet *buffer, int old_ack, int new_ack)
     }
     if (num_pkt_recv <= 0)
     {
-        printf("Received old ACK for %d - currently on %d\n", new_ack, old_ack);
+        /*
+        if (PRINT_STATEMENTS)
+        {
+            printf("Received old ACK for %d - currently on %d\n", new_ack, old_ack);
+        }
+        */
         return old_ack;
     }
     if (num_pkt_recv > MAX_BUFFER)
@@ -134,7 +155,12 @@ int handle_ack(struct sent_packet *buffer, int old_ack, int new_ack)
     {
         buffer[i].resent = 0;
     }
-    printf("Moved buffer forward %d packets\n", num_pkt_recv);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Moved buffer forward %d packets\n", num_pkt_recv);
+    }
+    */
     return new_ack;
 }
 
@@ -227,7 +253,7 @@ void send_unsent_packets(
 
 int main(int argc, char *argv[])
 {
-    int listen_sockfd, send_sockfd, new_ack, num_times_ack_repeated, last_ack_cwnd_change, seq_num, ack_num, cwnd;
+    int listen_sockfd, send_sockfd, new_ack, num_times_ack_repeated, last_ack_cwnd_change, seq_num, ack_num, cwnd, ssthresh;
     struct sockaddr_in client_addr, server_addr_to, server_addr_from;
     socklen_t addr_size = sizeof(server_addr_to);
     struct timeval timeout, dev_rtt;
@@ -237,6 +263,7 @@ int main(int argc, char *argv[])
     num_times_ack_repeated = 0;
     last_ack_cwnd_change = 0;
     cwnd = INITIAL_WINDOW;
+    ssthresh = SSTHRESH;
     struct sent_packet buffer[MAX_BUFFER];
     for (int i = 0; i < MAX_BUFFER; i++)
     {
@@ -306,7 +333,12 @@ int main(int argc, char *argv[])
     int file_size = ftell(fp);
     int num_packets = (int)ceil((double)file_size / PAYLOAD_SIZE);
     fseek(fp, 0, SEEK_SET);
-    printf("Starting to send file: %s, which has size %d (%d packets)\n", filename, file_size, num_packets);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Starting to send file: %s, which has size %d (%d packets)\n", filename, file_size, num_packets);
+    }
+    */
     read_file_and_create_packet(fp, &pkt, 0);
 
     // Send handshake
@@ -323,12 +355,17 @@ int main(int argc, char *argv[])
         // printPacket(&pkt);
         ack_num = recv_ack(listen_sockfd, &server_addr_from, addr_size);
     }
-    printf("Handshake Received\n");
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Handshake Received\n");
+    }
+    */
     // Changed the following <= to < for correct client shutdown if the server's final ACK is not lost
     while (ack_num < num_packets)
     {
         // Additive increase
-        if (ack_num - last_ack_cwnd_change >= cwnd)
+        if ((ack_num - last_ack_cwnd_change >= cwnd) || (cwnd <= ssthresh))
         {
             cwnd++;
             last_ack_cwnd_change = ack_num;
@@ -351,8 +388,14 @@ int main(int argc, char *argv[])
             // Treat the case in which recvfrom has timed out
             // Right now there are 4 flying packets, so the timeout is for the first packet in the
             // buffer. Resend this packet
-            printf("There has been a timeout, resending packet number %d\n", ack_num);
+            /*
+            if (PRINT_STATEMENTS)
+            {
+                printf("There has been a timeout, resending packet number %d\n", ack_num);
+            }
+            */
             resend_packet(buffer, ack_num, ack_num, send_sockfd, &server_addr_to, addr_size);
+            ssthresh = fmax((int)cwnd / 2, 2);
             cwnd = INITIAL_WINDOW;
             last_ack_cwnd_change = ack_num;
         }
@@ -364,10 +407,17 @@ int main(int argc, char *argv[])
                 // Fast retransmit
                 if (num_times_ack_repeated == 3)
                 {
-                    printf("Multiple ACKs for %d detected - beginning fast retransmit", ack_num);
+                    /*
+                    if (PRINT_STATEMENTS)
+                    {
+                        printf("Multiple ACKs for %d detected - beginning fast retransmit", ack_num);
+                    }
+                    */
                     resend_packet(buffer, ack_num, ack_num, send_sockfd, &server_addr_to, addr_size);
                     cwnd /= 2;
                     last_ack_cwnd_change = ack_num;
+                    ssthresh = fmax(cwnd, 2);
+                    cwnd += 3;
                 }
                 // Fast recovery
                 else if (num_times_ack_repeated > 3)
@@ -391,7 +441,12 @@ int main(int argc, char *argv[])
         //     new_ack = recv_ack(listen_sockfd, &server_addr_from, addr_size);
         // }
     }
-    printf("File sent\n");
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("File sent\n");
+    }
+    */
 
     /*
 Handshake format:

@@ -20,7 +20,12 @@ int write_packet_to_file(FILE *fp, struct packet *pkt)
         perror("Error writing to file");
         exit(1);
     }
-    printf("Wrote %d bytes to the file \n", (int)bytes_written);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Wrote %d bytes to the file \n", (int)bytes_written);
+    }
+    */
     return bytes_written;
 }
 
@@ -32,7 +37,12 @@ void recv_packet(struct packet *pkt, int sockfd, struct sockaddr_in *addr, sockl
         perror("Error receiving packet");
         exit(1);
     }
-    printRecv(pkt);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printRecv(pkt);
+    }
+    */
 }
 
 int handle_handshake(FILE *fp, struct packet *pkt, int sockfd, struct sockaddr_in *addr, socklen_t addr_size)
@@ -52,7 +62,12 @@ void send_ack(int acknum, int sockfd, struct sockaddr_in *addr, socklen_t addr_s
         perror("Error sending ACK");
         exit(1);
     }
-    printf("ACK %d\n", acknum);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("ACK %d\n", acknum);
+    }
+    */
 }
 
 // Function that appropriately buffers the packet - returns the index the packet was buffered at or -1 if packet was discarded
@@ -62,7 +77,12 @@ int buffer_packet(struct packet *pkt, struct packet_recv *buffer, int *expected_
     if (ind < 0)
     {
         // If the packet is out of order, we don't want to buffer it
-        printf("Out of order packet %d received, ignoring\n", pkt->seqnum);
+        /*
+        if (PRINT_STATEMENTS)
+        {
+            printf("Out of order packet %d received, ignoring\n", pkt->seqnum);
+        }
+        */
         return -1;
     }
     if (ind >= MAX_BUFFER)
@@ -101,7 +121,7 @@ void save_packets(FILE *fp, struct packet_recv *buffer, int *expected_seq_num)
         buffer[i - ind] = buffer[i];
     }
     // Marking the packets at the very end as not received
-    for (int i = 0; i < ind; i++)
+    for (int i = MAX_BUFFER - ind; i < MAX_BUFFER; i++)
     {
         buffer[i].received = 0;
     }
@@ -166,10 +186,20 @@ int main()
     Handshake: File size
     */
     // Ignore the first handshake to trigger a timeout
-    printf("Waiting for handshake\n");
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Waiting for handshake\n");
+    }
+    */
     int num_packets = handle_handshake(fp, &pkt, listen_sockfd, &client_addr_from, addr_size);
     send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
-    printf("Handshake received: %d packets expected\n", num_packets);
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("Handshake received: %d packets expected\n", num_packets);
+    }
+    */
     // Dealing with repeated handshake messages
     while (pkt.seqnum == num_packets)
     {
@@ -190,7 +220,12 @@ int main()
         }
         send_ack(expected_seq_num, send_sockfd, &client_addr_to, addr_size);
     }
-    printf("File received, shutting down\n");
+    /*
+    if (PRINT_STATEMENTS)
+    {
+        printf("File received, shutting down\n");
+    }
+    */
     // No shutdown protocol - see https://piazza.com/class/ln0rg59p7g82fk/post/226 -> Not necessary for client to shutdown
     /* Upon receiving a packet:
     Read the header
