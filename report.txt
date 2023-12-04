@@ -1,2 +1,25 @@
-Please concisely describe your congestion control scheme here.
-No need to be verbose, brief descriptions/bullet points are preferred.
+Handshake Logic:
+- Client sends initial packet, with its sequence number being the number of packets
+- Upon receiving the first packet, the server knows how many packets it will receive, and ACKs
+- Upon receiving the first ACK, the client knows the connection has been established and can begin transmitting
+
+Server Implementation:
+- The server has a set buffer size.  Upon receiving a new packet, it's buffered
+- After buffering a packet, the server writes every single buffered packet in sequence and ACKs the next unreceived packet number
+
+Client Implementation:
+- Upon receiving an ACK, update the cwnd according to the appropriate algorithm
+- Make new packets for all new packets added to the cwnd range
+- Wait for a new ACK
+
+We have implemented an AIMD congestion control algorithm
+Additive Increase:
+- The client makes use of a slow start algorithm, increasing the cwnd size by 1 at each ACK until reaching the slow start threshold
+- After passing the slow start threshold, an additive increase algorithm is used, increasing the cwnd by 1 after every cwnd ACKs
+Multiplicative Decrease:
+- Upon receiving 3 duplicate ACKs, fast retransmit is used to resend the missing packet
+    - Then, ssthresh is set to max(2, cwnd/2)
+    - cwnd is set to ssthresh + 3
+    - For every subsequent duplicate, fast recovery is used, with cwnd increasing by 1
+- Upon timeout, we set cwnd to 1 and ssthresh to max(2, cwnd/2)
+- These methods are pretty much as outlined in the chapter 3 slides
