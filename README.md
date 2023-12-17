@@ -1,5 +1,7 @@
 # CS 118 Course Project 2 - Reliable Data Transfer and Congestion Control
 
+This is my solution for the CS 118 Project 2 in Fall 23.  The report.txt file outlines the congestion control methods implemented.  It acheived a leaderboard rank (within the top 15 of all solutions for the class).  It provides for reliable, one directional file transfer over UDP.
+
 **WARNING**: This README is provided as supplementary documentation to assist with the setup and execution of the course project. It does not replace the official project specification. Please refer to the official project specification for detailed requirements and instructions. In the case of any discrepancies or ambiguities, the official project specification takes precedence.
 
 ## Overview
